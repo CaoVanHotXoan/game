@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: scores
+    // Document ID: auto-generated
+    // Fields:
+    //   - username: string (required, 1-50 chars) - The name of the player.
+    //   - score: number (required, >= 0) - The score achieved in the game.
+    //   - survival_time: number (required, >= 0) - The time the player survived in seconds.
+    //   - created_at: string (required, ISO 8601 format) - When the score was recorded.
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "sinhvienxoan@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidScore(data) {
+      return data.username is string && data.username.size() >= 1 && data.username.size() <= 50 &&
+             data.score is int && data.score >= 0 &&
+             data.survival_time is int && data.survival_time >= 0 &&
+             data.created_at is string && data.created_at.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /scores/{scoreId} {
+      // Anyone can read the leaderboard (Top 10)
+      // In a real app, we might want to restrict this more, but for a global leaderboard it's common.
+      // However, per instructions, we should require authentication by default.
+      allow read: if isAuthenticated();
+      
+      // Authenticated users can submit their scores
+      allow create: if isAuthenticated() && 
+                      hasRequiredFields(['username', 'score', 'survival_time', 'created_at']) &&
+                      hasOnlyAllowedFields(['username', 'score', 'survival_time', 'created_at']) &&
+                      isValidScore(request.resource.data);
+      
+      // Scores are immutable once submitted
+      allow update, delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if isAdmin();
+    }
+    
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
